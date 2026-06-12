@@ -25,7 +25,7 @@ function chrome(body: string): string {
   return `
     <div class="shell">
       <header class="bar">
-        <div class="bar__brand"><img src="/logo.jpg" width="26" height="26" alt="" /><span>Marmo</span></div>
+        <div class="bar__brand"><img src="/logo.png" width="26" height="26" alt="" /><span>Marmo</span></div>
         <span class="bar__net">testnet</span>
       </header>
       <main class="screen">${body}</main>
