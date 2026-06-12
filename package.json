@@ -12,7 +12,7 @@
     "tauri:build": "tauri build"
   },
   "dependencies": {
-    "@marmoxyz/sui-kit": "file:../sdk",
+    "@marmoxyz/sui-kit": "^0.1.0",
     "@mysten/sui": "^1.45.0",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",

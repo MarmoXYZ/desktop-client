@@ -1,9 +1,10 @@
-import { Shard, MarmoWallet, createClient, buildTransferSui, signAndSubmit } from "@marmoxyz/sui-kit";
+import { Shard, MarmoWallet, createClient, buildTransferSui, submit } from "@marmoxyz/sui-kit";
 import { Ed25519PublicKey } from "@mysten/sui/keypairs/ed25519";
-import { MIST_PER_SUI } from "@mysten/sui/utils";
+import { MIST_PER_SUI, toBase64 } from "@mysten/sui/utils";
 import { getFaucetHost, requestSuiFromFaucetV2 } from "@mysten/sui/faucet";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { writeTextFile, readTextFile, exists, mkdir, BaseDirectory } from "@tauri-apps/plugin-fs";
+import * as core from "./core.js";
 
 export type NetworkName = "testnet" | "mainnet";
 
@@ -15,6 +16,8 @@ export interface MemberRecord {
   label: string;
   publicKey: string;
   secret?: string;
+  shardId?: string;
+  apiKey?: string;
 }
 
 export interface Vault {
@@ -71,10 +74,17 @@ export interface CreatedWallet {
 
 export async function createWallet(): Promise<CreatedWallet> {
   const drive = Shard.create("drive");
-  const server = Shard.create("server");
   const recovery = Shard.create("recovery");
 
-  const wallet = MarmoWallet.twoOfThree(drive, server, recovery);
+  const serverShard = await core.createServerShard();
+  const serverPublicKey = new Ed25519PublicKey(serverShard.publicKey);
+
+  const wallet = MarmoWallet.from({
+    members: [drive, { publicKey: serverPublicKey }, recovery],
+    threshold: 2,
+  });
+
+  const apiKey = await core.registerWallet(wallet.address, serverShard.shardId);
 
   const vault: Vault = {
     address: wallet.address,
@@ -82,7 +92,7 @@ export async function createWallet(): Promise<CreatedWallet> {
     network: NETWORK,
     members: [
       { label: "drive", publicKey: drive.publicKey.toBase64() },
-      { label: "server", publicKey: server.publicKey.toBase64(), secret: server.exportSecret() },
+      { label: "server", publicKey: serverShard.publicKey, shardId: serverShard.shardId, apiKey },
       { label: "recovery", publicKey: recovery.publicKey.toBase64(), secret: recovery.exportSecret() },
     ],
   };
@@ -148,13 +158,16 @@ export interface SendResult {
 export async function send(vault: Vault, recipient: string, amountSui: number): Promise<SendResult> {
   if (!driveShard) throw new Error("Drive not connected");
 
-  const serverRecord = vault.members.find((m) => m.label === "server");
-  if (!serverRecord?.secret) throw new Error("Co-signer shard unavailable");
-  const server = Shard.fromSecret(serverRecord.secret, "server");
+  const server = vault.members.find((m) => m.label === "server");
+  if (!server?.apiKey) throw new Error("Co-signer is not configured for this wallet");
 
   const wallet = walletFromVault(vault);
   const txBytes = await buildTransferSui(client, wallet, recipient, amountSui);
-  const result = await signAndSubmit(client, wallet, txBytes, [driveShard, server]);
+
+  const driveSignature = await driveShard.sign(txBytes);
+  const serverSignature = await core.cosign(vault.address, server.apiKey, toBase64(txBytes), amountSui);
+
+  const result = await submit(client, wallet, txBytes, [driveSignature, serverSignature]);
 
   return {
     digest: result.digest,
